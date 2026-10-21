@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { StellarTransaction } from '@/types';
+import { StellarTransaction, StellarOperation } from '@/types';
 import { formatAddress, formatTokenAmount } from '@/utils/format';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -28,7 +28,7 @@ interface TransactionTableProps {
   onPageSizeChange: (size: number) => void;
 }
 
-const OPERATION_TYPE_LABELS: { [key: string]: string } = {
+const OPERATION_TYPE_LABELS: Record<string, string> = {
   payment: 'Payment',
   create_account: 'Create Account',
   account_merge: 'Account Merge',
@@ -37,6 +37,7 @@ const OPERATION_TYPE_LABELS: { [key: string]: string } = {
   set_options: 'Set Options',
   change_trust: 'Change Trust',
   allow_trust: 'Allow Trust',
+  trust: 'Change Trust',
   account_created: 'Account Created',
   invoke_host_function: 'Invoke Host Function',
   bump_sequence: 'Bump Sequence',
@@ -53,8 +54,8 @@ export default function TransactionTable({
   onPageChange,
   onPageSizeChange,
 }: TransactionTableProps) {
-  const totalPages = Math.ceil(totalCount / pageSize);
-  const startIndex = (currentPage - 1) * pageSize + 1;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const startIndex = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const endIndex = Math.min(currentPage * pageSize, totalCount);
 
   const handleCopyHash = (hash: string) => {
@@ -62,16 +63,37 @@ export default function TransactionTable({
     toast.success('Transaction hash copied');
   };
 
-  const getOperationType = (operations: any[]): string => {
+  const getOperationType = (operations?: StellarOperation[]): string => {
     if (!operations || operations.length === 0) return 'Unknown';
     const mainOp = operations[0];
-    return OPERATION_TYPE_LABELS[mainOp.type] || mainOp.type;
+    if (!mainOp || !mainOp.type) return 'Unknown';
+    if (OPERATION_TYPE_LABELS[mainOp.type]) {
+      return OPERATION_TYPE_LABELS[mainOp.type];
+    }
+    // Format arbitrary / unknown operation names gracefully (e.g. 'custom_op' -> 'Custom Op')
+    return mainOp.type
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
   };
 
-  const getOperationDetails = (operations: any[]): string | null => {
+  const getOperationDetails = (operations?: StellarOperation[]): string | null => {
     if (!operations || operations.length === 0) return null;
     const mainOp = operations[0];
-    return mainOp.amount ? `${formatTokenAmount(mainOp.amount, 2)} ${mainOp.asset}` : null;
+    if (!mainOp) return null;
+
+    if (mainOp.amount) {
+      return `${formatTokenAmount(mainOp.amount, 2)} ${mainOp.asset || 'XLM'}`;
+    }
+    if (mainOp.starting_balance) {
+      return `${formatTokenAmount(mainOp.starting_balance, 2)} XLM`;
+    }
+    if (mainOp.limit) {
+      return `Limit: ${formatTokenAmount(mainOp.limit, 2)} ${mainOp.asset || ''}`.trim();
+    }
+    if (mainOp.asset) {
+      return mainOp.asset;
+    }
+    return null;
   };
 
   if (error) {

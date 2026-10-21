@@ -1,34 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { fetchAccountTrustlines, addTrustline, removeTrustline } from '@/services/api';
-import { setTrustlines, setLoadingTrustlines } from '@/store/slices/accountSlice';
+import React, { useState } from 'react';
 import { Trustline } from '@/types';
 
 export const TrustlinesPanel: React.FC = () => {
-  const dispatch = useDispatch();
-  const { publicKey, trustlines, isLoadingTrustlines } = useSelector((state: any) => state.account);
-
+  const [trustlines, setTrustlines] = useState<Trustline[]>([]);
+  const [isLoadingTrustlines] = useState(false);
   const [assetCode, setAssetCode] = useState('');
   const [assetIssuer, setAssetIssuer] = useState('');
   const [limit, setLimit] = useState('1000000');
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
-
-  const loadTrustlines = async () => {
-    dispatch(setLoadingTrustlines(true));
-    try {
-      const data = await fetchAccountTrustlines(publicKey);
-      dispatch(setTrustlines(data));
-    } catch (err: any) {
-      setError('Failed to fetch account trustlines.');
-    } finally {
-      dispatch(setLoadingTrustlines(false));
-    }
-  };
-
-  useEffect(() => {
-    if (publicKey) loadTrustlines();
-  }, [publicKey]);
 
   const handleAddTrustline = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,17 +24,13 @@ export const TrustlinesPanel: React.FC = () => {
       return;
     }
 
-    try {
-      await addTrustline(publicKey, { assetCode, assetIssuer, limit });
-      setAssetCode('');
-      setAssetIssuer('');
-      await loadTrustlines(); // Refresh without full page reload
-    } catch (err: any) {
-      setError(err.message || 'Failed to add trustline.');
-    }
+    const newTrustline: Trustline = { assetCode, assetIssuer, limit, balance: '0' };
+    setTrustlines((prev) => [...prev, newTrustline]);
+    setAssetCode('');
+    setAssetIssuer('');
   };
 
-  const handleRemoveTrustline = async (item: Trustline) => {
+  const handleRemoveTrustline = (item: Trustline) => {
     setError(null);
     setWarning(null);
 
@@ -66,12 +42,9 @@ export const TrustlinesPanel: React.FC = () => {
       return;
     }
 
-    try {
-      await removeTrustline(publicKey, item.assetCode, item.assetIssuer);
-      await loadTrustlines(); // Refresh without full page reload
-    } catch (err: any) {
-      setError(err.message || 'Failed to remove trustline.');
-    }
+    setTrustlines((prev) =>
+      prev.filter((t) => t.assetCode !== item.assetCode || t.assetIssuer !== item.assetIssuer)
+    );
   };
 
   return (

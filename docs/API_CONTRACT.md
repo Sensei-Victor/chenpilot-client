@@ -89,6 +89,8 @@ The service includes methods for Stellar/Starknet account and funding paths, but
 | `POST /auth/funding/batch-fund` | `{"amounts":["1","2.5"]}` | `{"success":true,"data":{"transactionHashes":["0xabc","0xdef"],"totalAmount":"3.5"}}` | Service method only; no direct screen caller found. |
 | `GET /account/{userId}/transactions?page={page}&limit={limit}` | `GET /account/u1/transactions?page=1&limit=10` | `{"success":true,"data":{"transactions":[],"total":0,"page":1,"limit":10}}` | Account transaction thunk/dashboard; errors are stored in account state. |
 
+`StellarTransaction.operations` items support diverse operation variants (`payment`, `create_account`, `change_trust`, `allow_trust`, `account_merge`, Soroban host functions, and arbitrary or forward-compatible unknown variants). Client components like `TransactionTable` format known variants and render unknown variants safely without failure. Reusable deterministic fixtures for all operation variants are available in `src/test/fixtures/transactionFixtures.ts`.
+
 ## Contacts Endpoints
 
 `Contact` is `{ id, name, address, tokenType, createdAt, updatedAt, avatar?, isFavorite?, lastUsed? }`. Create requires `name`, `address`, and a `tokenType` from `XLM | USDC | USDT | BTC | ETH`; update accepts those fields optionally.

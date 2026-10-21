@@ -126,14 +126,35 @@ export interface WalletBalance {
 }
 
 // Stellar Transaction Types
+export type StellarOperationType =
+  | 'payment'
+  | 'create_account'
+  | 'account_merge'
+  | 'manage_offer'
+  | 'create_passive_offer'
+  | 'set_options'
+  | 'change_trust'
+  | 'allow_trust'
+  | 'trust'
+  | 'account_created'
+  | 'invoke_host_function'
+  | 'bump_sequence'
+  | 'ext_soroban_op'
+  | (string & {});
+
 export interface StellarOperation {
   id: string;
-  type: string; // e.g., 'payment', 'create_account', 'trust', etc.
+  type: StellarOperationType;
   amount?: string;
   asset?: string;
   from?: string;
   to?: string;
   source_account: string;
+  starting_balance?: string;
+  limit?: string;
+  trustee?: string;
+  trustor?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface StellarTransaction {
@@ -152,6 +173,13 @@ export interface TransactionHistory {
   transactions: StellarTransaction[];
   isLoading: boolean;
   error: string | null;
+}
+
+export interface Trustline {
+  assetCode: string;
+  assetIssuer: string;
+  limit: string;
+  balance: string;
 }
 
 // Agent Query Types
