@@ -169,6 +169,8 @@ export type StellarOperationType =
   | 'ext_soroban_op'
   | (string & {});
 
+export type TransactionDirection = 'incoming' | 'outgoing' | 'self' | 'unknown';
+
 export interface StellarOperation {
   id: string;
   type: StellarOperationType;
@@ -182,6 +184,7 @@ export interface StellarOperation {
   trustee?: string;
   trustor?: string;
   details?: Record<string, unknown>;
+  direction?: TransactionDirection;
 }
 
 export interface StellarTransaction {
@@ -194,6 +197,7 @@ export interface StellarTransaction {
   operation_count: number;
   successful: boolean;
   operations: StellarOperation[];
+  direction?: TransactionDirection;
 }
 
 /**
