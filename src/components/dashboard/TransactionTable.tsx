@@ -1,15 +1,22 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { StellarTransaction, StellarOperation } from '@/types';
-import { formatAddress, formatTokenAmount } from '@/utils/format';
+import {
+  formatAddress,
+  formatTransactionAmount,
+  formatTransactionDate,
+  formatTransactionFee,
+  ASSET_PRECISION,
+} from '@/utils/format';
+import { useAppSelector } from '@/store';
+import { Language } from '@/lib/i18n/i18n';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
   ChevronLeft,
   ChevronRight,
   ArrowUpRight,
-  ArrowDownLeft,
   ExternalLink,
   Check,
   AlertCircle,
@@ -26,6 +33,8 @@ interface TransactionTableProps {
   totalCount: number;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
+  language?: Language;
+  locale?: string;
 }
 
 const OPERATION_TYPE_LABELS: Record<string, string> = {
@@ -53,7 +62,12 @@ export default function TransactionTable({
   totalCount,
   onPageChange,
   onPageSizeChange,
+  language,
+  locale,
 }: TransactionTableProps) {
+  const reduxLanguage = useAppSelector((state) => state.ui?.language) as Language | undefined;
+  const currentLanguage = language || reduxLanguage || 'en';
+
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const startIndex = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const endIndex = Math.min(currentPage * pageSize, totalCount);
@@ -76,19 +90,27 @@ export default function TransactionTable({
       .replace(/\b\w/g, (char) => char.toUpperCase());
   };
 
+  const formatAmount = (value: string, asset?: string): string =>
+    formatTransactionAmount(value, {
+      language: currentLanguage,
+      locale,
+      asset,
+      decimals: asset ? ASSET_PRECISION[asset.toUpperCase()] : undefined,
+    });
+
   const getOperationDetails = (operations?: StellarOperation[]): string | null => {
     if (!operations || operations.length === 0) return null;
     const mainOp = operations[0];
     if (!mainOp) return null;
 
     if (mainOp.amount) {
-      return `${formatTokenAmount(mainOp.amount, 2)} ${mainOp.asset || 'XLM'}`;
+      return formatAmount(mainOp.amount, mainOp.asset || 'XLM');
     }
     if (mainOp.starting_balance) {
-      return `${formatTokenAmount(mainOp.starting_balance, 2)} XLM`;
+      return formatAmount(mainOp.starting_balance, 'XLM');
     }
     if (mainOp.limit) {
-      return `Limit: ${formatTokenAmount(mainOp.limit, 2)} ${mainOp.asset || ''}`.trim();
+      return `Limit: ${formatAmount(mainOp.limit, mainOp.asset)}`.trim();
     }
     if (mainOp.asset) {
       return mainOp.asset;
@@ -206,20 +228,23 @@ export default function TransactionTable({
                     </button>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="text-gray-300">
+                    <span className="text-gray-300 block">
                       {getOperationDetails(tx.operations) || '-'}
                     </span>
+                    {tx.fee_charged && (
+                      <span className="text-xs text-gray-500 block">
+                        Fee: {formatTransactionFee(tx.fee_charged, { language: currentLanguage, locale, asset: 'XLM' })}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 px-4">
                     <span className="text-gray-300">#{tx.ledger}</span>
                   </td>
                   <td className="py-3 px-4">
                     <span className="text-gray-300">
-                      {new Date(tx.created_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
+                      {formatTransactionDate(tx.created_at, {
+                        language: currentLanguage,
+                        locale,
                       })}
                     </span>
                   </td>

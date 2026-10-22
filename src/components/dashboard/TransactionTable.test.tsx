@@ -1,6 +1,25 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import type { StellarTransaction } from '@/types';
+
+// Mutable "selected application language" exposed to the mocked store so that a
+// language change can be simulated without booting the real Redux store.
+const appState = vi.hoisted(() => ({ language: 'en' as string }));
+
+vi.mock('@/store', () => ({
+  useAppSelector: (selector: (state: { ui: { language: string } }) => unknown) =>
+    selector({ ui: { language: appState.language } }),
+}));
+
+// Mock react-hot-toast
+vi.mock('react-hot-toast', () => ({
+  default: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import TransactionTable from './TransactionTable';
 import {
   mockPaymentTransaction,
@@ -18,14 +37,6 @@ import {
   createMockTransaction,
 } from '@/test/fixtures/transactionFixtures';
 
-// Mock react-hot-toast
-vi.mock('react-hot-toast', () => ({
-  default: {
-    success: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
 describe('TransactionTable (#245)', () => {
   const defaultProps = {
     transactions: mockMixedTransactionsList,
@@ -40,6 +51,7 @@ describe('TransactionTable (#245)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    appState.language = 'en';
     // Mock navigator.clipboard
     Object.assign(navigator, {
       clipboard: {
@@ -91,7 +103,7 @@ describe('TransactionTable (#245)', () => {
         />
       );
       expect(screen.getByText('Payment')).toBeInTheDocument();
-      expect(screen.getByText('150.50 XLM')).toBeInTheDocument();
+      expect(screen.getByText('150.5000000 XLM')).toBeInTheDocument();
       expect(screen.getByText('1 op')).toBeInTheDocument();
     });
 
@@ -104,7 +116,7 @@ describe('TransactionTable (#245)', () => {
         />
       );
       expect(screen.getByText('Create Account')).toBeInTheDocument();
-      expect(screen.getByText('10.00 XLM')).toBeInTheDocument();
+      expect(screen.getByText('10.0000000 XLM')).toBeInTheDocument();
     });
 
     it('renders change_trust transaction with limit and asset details', () => {
@@ -116,7 +128,9 @@ describe('TransactionTable (#245)', () => {
         />
       );
       expect(screen.getByText('Change Trust')).toBeInTheDocument();
-      expect(screen.getByText('Limit: 1,000,000.00 USDC')).toBeInTheDocument();
+      expect(
+        screen.getByText(/^Limit: 1,000,000\.00(0{5})? USDC$/)
+      ).toBeInTheDocument();
     });
 
     it('renders allow_trust transaction type correctly', () => {
@@ -177,7 +191,7 @@ describe('TransactionTable (#245)', () => {
       );
       // 'claim_claimable_balance' should be rendered in title case as 'Claim Claimable Balance'
       expect(screen.getByText('Claim Claimable Balance')).toBeInTheDocument();
-      expect(screen.getByText('75.25 XLM')).toBeInTheDocument();
+      expect(screen.getByText('75.2500000 XLM')).toBeInTheDocument();
     });
 
     it('renders arbitrary custom operation types formatted cleanly', () => {
@@ -325,5 +339,82 @@ describe('TransactionTable (#245)', () => {
       fireEvent.change(select, { target: { value: '25' } });
       expect(onPageSizeChange).toHaveBeenCalledWith(25);
     });
+  });
+});
+
+const localeTransactions: StellarTransaction[] = [
+  {
+    id: 'tx-1',
+    hash: 'GABCDEF12345678901234567890123456789012345678901234567890',
+    ledger: 123456,
+    created_at: '2026-05-15T14:30:00Z',
+    source_account: 'GSOURCEACCOUNT',
+    fee_charged: '100',
+    operation_count: 1,
+    successful: true,
+    operations: [
+      {
+        id: 'op-1',
+        type: 'payment',
+        amount: '1234567.89',
+        asset: 'XLM',
+        source_account: 'GSOURCEACCOUNT',
+      },
+    ],
+  },
+];
+
+const localeBaseProps = {
+  transactions: localeTransactions,
+  isLoading: false,
+  error: null,
+  currentPage: 1,
+  pageSize: 10,
+  totalCount: 1,
+  onPageChange: vi.fn(),
+  onPageSizeChange: vi.fn(),
+};
+
+describe('TransactionTable locale-aware formatting', () => {
+  beforeEach(() => {
+    appState.language = 'en';
+    localeBaseProps.onPageChange.mockClear();
+    localeBaseProps.onPageSizeChange.mockClear();
+  });
+
+  it('formats amounts, fees and dates with English locale separators and XLM precision', () => {
+    render(<TransactionTable {...localeBaseProps} />);
+
+    expect(screen.getByText('1,234,567.8900000 XLM')).toBeInTheDocument();
+    expect(screen.getByText(/^Fee: 100\.0000000 XLM$/)).toBeInTheDocument();
+    expect(screen.getByText(/May 15, 2026/)).toBeInTheDocument();
+  });
+
+  it('re-renders amounts, fees and dates with the newly selected language', () => {
+    const { unmount } = render(<TransactionTable {...localeBaseProps} />);
+    expect(screen.getByText('1,234,567.8900000 XLM')).toBeInTheDocument();
+    unmount();
+
+    appState.language = 'fr';
+    render(<TransactionTable {...localeBaseProps} />);
+
+    // French: space grouping, comma decimal, 7-decimal XLM precision
+    expect(
+      screen.getByText(/1[\s\u00a0\u202f]234[\s\u00a0\u202f]567,8900000 XLM/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Fee: 100,0000000 XLM$/)).toBeInTheDocument();
+    expect(screen.getByText(/15 mai 2026/)).toBeInTheDocument();
+    expect(screen.queryByText('1,234,567.8900000 XLM')).not.toBeInTheDocument();
+    expect(screen.queryByText(/May 15, 2026/)).not.toBeInTheDocument();
+  });
+
+  it('preserves pagination display and callbacks', () => {
+    render(<TransactionTable {...localeBaseProps} totalCount={25} pageSize={10} />);
+
+    expect(
+      screen.getByText('Showing 1 to 10 of 25 transactions')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Per page:')).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toHaveValue('10');
   });
 });
