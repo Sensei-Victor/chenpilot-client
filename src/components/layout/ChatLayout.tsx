@@ -1,20 +1,19 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAppDispatch, useAppSelector } from "@/store";
 import { logout } from "@/store/slices/authSlice";
-import { toggleTheme } from "@/store/slices/uiSlice";
 import {
-  clearMessages,
   startNewChat,
   loadChatHistory,
-  deleteChatHistory,
   loadConversationsLocally,
-  deleteConversationLocally,
+deleteConversation,
   setCurrentConversation,
 } from "@/store/slices/chatSlice";
 import { ConversationManager } from "@/components/chat/ConversationManager";
+import { ConversationExportMenu } from "@/components/chat/ConversationExportMenu";
+import { DeleteConversationDialog } from "@/components/chat/DeleteConversationDialog";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
@@ -28,39 +27,59 @@ interface ChatLayoutProps {
 
 export function ChatLayout({ children }: ChatLayoutProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const theme = useAppSelector((state) => state.ui) || { mode: "dark" };
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Conversation awaiting delete confirmation (#269)
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+
+  // ── Search ──
+  const search = useChatSearch();
+  const { isSearchOpen, openSearch, closeSearch, setQuery, goToNext, goToPrev, searchState, searchInputRef } = search;
+
+  // Ctrl/Cmd+F – intercept only when focus is inside the chat route.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        // Only hijack the shortcut on the chat page.
+        if (pathname?.startsWith('/chat')) {
+          e.preventDefault();
+          if (isSearchOpen) {
+            searchInputRef.current?.focus();
+          } else {
+            openSearch();
+          }
+        }
+      }
+      if (e.key === 'Escape' && isSearchOpen) {
+        closeSearch();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pathname, isSearchOpen, openSearch, closeSearch, searchInputRef]);
 
   // Get chat history from Redux store
-  const { chatHistory, currentConversation, conversations } = useAppSelector(
+  const { chatHistory, currentConversation, conversations, messages } = useAppSelector(
     (state) => state.chat,
   );
 
   // Convert chat history object to array for display
   const chatHistoryList = React.useMemo(() => {
-    return Object.entries(chatHistory)
-      .map(([conversationId, messages]) => {
+    return conversations
+      .map((conversation) => {
+        const messages = chatHistory[conversation.id] || conversation.messages || [];
         const lastMessage = messages[messages.length - 1];
-        const firstUserMessage = messages.find((msg) => msg.type === "user");
         return {
-          id: conversationId,
-          title: firstUserMessage
-            ? typeof firstUserMessage.content === "string" &&
-              firstUserMessage.content.length > 50
-              ? firstUserMessage.content.substring(0, 50) + "..."
-              : typeof firstUserMessage.content === "string"
-                ? firstUserMessage.content
-                : "New Chat"
-            : "New Chat",
+          id: conversation.id,
+          title: conversation.title?.trim() || "New Chat",
           lastMessage:
             typeof lastMessage?.content === "string" ? lastMessage.content : "",
-          timestamp: lastMessage?.timestamp || new Date().toISOString(),
-          messageCount: messages.length,
+          timestamp: lastMessage?.timestamp || conversation.updatedAt,
+          messageCount: conversation.messageCount || messages.length,
         };
       })
       .sort(
@@ -68,25 +87,20 @@ export function ChatLayout({ children }: ChatLayoutProps) {
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       )
       .slice(0, 10); // Show last 10 conversations
-  }, [chatHistory]);
+  }, [chatHistory, conversations]);
 
-  const profileMenuItems = [
-    {
-      name: "Dashboard",
-      href: "/dashboard",
-    },
-    {
-      name: "Contacts",
-      href: "/contacts",
-    },
-    {
-      name: "Settings",
-      href: "/settings",
-    },
+  const navItems = [
+    { name: "Chat", href: "/chat" },
+    { name: "Dashboard", href: "/dashboard" },
+    { name: "Contacts", href: "/contacts" },
+    { name: "Settings", href: "/settings" },
   ];
 
+  const isNavItemActive = (href: string) => pathname.startsWith(href);
+
+  const profileMenuItems = navItems.filter((item) => item.href !== "/chat");
+
   const handleNewChat = () => {
-    // Start new chat - this will save current conversation and clear messages
     dispatch(startNewChat());
     toast.success("Starting new chat...");
     router.push("/chat");
@@ -101,15 +115,20 @@ export function ChatLayout({ children }: ChatLayoutProps) {
     setSidebarOpen(false);
   };
 
-  const handleDeleteChat = (
-    conversationId: string,
-    event: React.MouseEvent,
-  ) => {
-    event.stopPropagation();
-    dispatch(deleteConversationLocally(conversationId));
-    toast.success("Chat deleted");
-  };
+const handleDeleteChat = (conversationId: string, event?: React.MouseEvent) => {
+  event?.stopPropagation();
+  const conversation = conversations.find((item) => item.id === conversationId);
+  setPendingDelete({ id: conversationId, title: conversation?.title ?? "This conversation" });
+};
 
+// Confirmed: cancel in-flight requests, drop late responses, then remove (#269)
+const confirmDeleteChat = async (conversationId: string) => {
+  const wasOpen = currentConversation?.id === conversationId;
+  setPendingDelete(null);
+  await dispatch(deleteConversation(conversationId));
+  toast.success("Chat deleted");
+  if (wasOpen) router.push("/chat");
+};
   const handleNavigation = (href: string) => {
     router.push(href);
     setSidebarOpen(false);
@@ -121,17 +140,13 @@ export function ChatLayout({ children }: ChatLayoutProps) {
       await dispatch(logout()).unwrap();
       toast.success("Successfully logged out!");
       router.push("/auth/login");
-    } catch (error: any) {
+    } catch (error: unknown) {
       const errorMessage =
         error instanceof Error
           ? error.message
           : String(error || "Logout failed");
       toast.error(errorMessage);
     }
-  };
-
-  const handleThemeToggle = () => {
-    dispatch(toggleTheme());
   };
 
   // Load conversations from localStorage on component mount
@@ -142,6 +157,8 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   const toggleSidebar = () => {
     setSidebarCollapsed(!sidebarCollapsed);
   };
+
+  const isChatRoute = pathname?.startsWith('/chat');
 
   return (
     <div className="h-screen flex flex-col lg:flex-row bg-gray-50 dark:bg-gray-900">
@@ -227,6 +244,17 @@ export function ChatLayout({ children }: ChatLayoutProps) {
                   </span>
                 </div>
               )}
+
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSidebarOpen(false)}
+                  className="lg:hidden text-gray-400 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
             </div>
 
             {!sidebarCollapsed && (
@@ -241,7 +269,8 @@ export function ChatLayout({ children }: ChatLayoutProps) {
               </div>
             )}
 
-            <div className="flex items-center space-x-2">
+            {/* New Chat Button */}
+            <div className="px-4 py-4">
               <Button
                 variant="ghost"
                 size="sm"
@@ -251,7 +280,11 @@ export function ChatLayout({ children }: ChatLayoutProps) {
                 }}
                 className="lg:hidden text-gray-400 hover:text-white"
               >
-                <X className="h-5 w-5" />
+                {sidebarCollapsed ? (
+                  <Plus className="h-5 w-5" />
+                ) : (
+                  <span>New Chat</span>
+                )}
               </Button>
             </div>
           </div>
@@ -260,8 +293,12 @@ export function ChatLayout({ children }: ChatLayoutProps) {
           <div className="px-4 py-4">
             <Button
               onClick={handleNewChat}
+              aria-current={isNavItemActive("/chat") ? "page" : undefined}
               className={cn(
-                "w-full bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-medium py-3 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl",
+                "w-full font-medium py-3 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl",
+                isNavItemActive("/chat")
+                  ? "bg-purple-500 hover:bg-purple-500 text-white shadow-purple-500/30"
+                  : "bg-[#7C3AED] hover:bg-[#6D28D9] text-white",
                 sidebarCollapsed ? "px-3" : "px-4",
               )}
             >
@@ -273,10 +310,22 @@ export function ChatLayout({ children }: ChatLayoutProps) {
             </Button>
           </div>
 
+          {/* Export the active conversation (#96) */}
+          {!sidebarCollapsed && (
+            <div className="px-4 pb-3">
+              <ConversationExportMenu
+                messages={messages}
+                conversationId={currentConversation?.id}
+                title={currentConversation?.title}
+              />
+            </div>
+          )}
+
           {/* Chat History */}
           <div className="flex-1 overflow-y-auto px-4">
             {!sidebarCollapsed && (
               <ConversationManager
+                onDeleteConversation={(conv) => handleDeleteChat(conv.id)}
                 onSelectConversation={(conv) => {
                   dispatch(loadChatHistory(conv.id));
                   dispatch(setCurrentConversation(conv));
@@ -346,17 +395,41 @@ export function ChatLayout({ children }: ChatLayoutProps) {
                   ))}
               </button>
 
-              {/* Profile Menu Dropdown */}
-              {profileMenuOpen && !sidebarCollapsed && (
-                <div className="absolute bottom-full left-0 right-0 mb-2 bg-gray-800/95 backdrop-blur-sm rounded-xl shadow-2xl border border-gray-700 overflow-hidden">
-                  {profileMenuItems.map((item) => {
-                    return (
-                      <button
-                        key={item.name}
-                        onClick={() => handleNavigation(item.href)}
-                        className="w-full flex items-center space-x-3 px-4 py-3 text-sm text-gray-200 hover:bg-gray-700/50 transition-all duration-200"
+{/* Profile Menu Dropdown */}
+{profileMenuOpen && !sidebarCollapsed && (
+  <div className="absolute bottom-full left-0 right-0 mb-2 bg-gray-800/95 backdrop-blur-sm rounded-xl shadow-2xl border border-gray-700 overflow-hidden">
+    {profileMenuItems.map((item) => {
+      const active = isNavItemActive(item.href);
+
+      return (
+        <button
+          key={item.name}
+          onClick={() => handleNavigation(item.href)}
+          aria-current={active ? "page" : undefined}
+          className={cn(
+            "w-full flex items-center space-x-3 px-4 py-3 text-sm transition-all duration-200",
+            active
+              ? "bg-purple-700/40 text-white font-medium border-l-2 border-purple-400"
+              : "text-gray-200 hover:bg-gray-700/50",
+          )}
+        >
+          <span>{item.name}</span>
+        </button>
+      );
+    })}
+
+    <div className="border-t border-gray-700">
+      <button
+        onClick={handleLogout}
+        className="w-full flex items-center space-x-3 px-4 py-3 text-sm text-red-400 hover:bg-red-900/20 transition-all duration-200"
+      >
+        {/* Preserve the existing logout button contents here */}
+      </button>
+    </div>
+  </div>
+)}
                       >
-                        <span>{item.name}</span>
+                        <span>Sign Out</span>
                       </button>
                     );
                   })}
@@ -374,8 +447,8 @@ export function ChatLayout({ children }: ChatLayoutProps) {
                       <span>Sign Out</span>
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -393,6 +466,11 @@ export function ChatLayout({ children }: ChatLayoutProps) {
           {children}
         </main>
       </div>
+      <DeleteConversationDialog
+        conversation={pendingDelete}
+        onConfirm={confirmDeleteChat}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

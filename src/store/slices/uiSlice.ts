@@ -1,29 +1,47 @@
 import { createSlice, PayloadAction, createAction } from "@reduxjs/toolkit";
-
+import { readActiveUserId, readLanguagePreference, saveLanguagePreference } from "@/lib/i18n/languagePreference";
+import { readSavedTheme, saveTheme } from "@/lib/theme";
+import { readTranslationLanguage, saveTranslationLanguage, TranslationLanguage } from "@/lib/translation";
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface RetryStatus {
+  label: string;
+  attempt: number;
+  maxAttempts: number;
+  nextRetryAt: number;
+}
 
 export interface ThemeState {
   mode: "light" | "dark";
   language: "en" | "ar" | "es" | "fr";
+  /** Language messages are translated into (#83); null follows `language`. */
+  translationLanguage: TranslationLanguage | null;
+  retryStatus: RetryStatus | null;
+  sidebarOpen: boolean;
+  notifications: unknown[];
+  modals: Record<string, boolean>;
 }
 
 const initialState: ThemeState = {
   mode: "dark", // Default to dark mode
-  language: "en", // Default to English
+  // Stored preference, applied before render (#291)
+  language: typeof window !== "undefined" ? readLanguagePreference(readActiveUserId()) : "en",
+  translationLanguage: typeof window !== "undefined" ? readTranslationLanguage() : null,
+  retryStatus: null,
+  sidebarOpen: false,
+  notifications: [],
+  modals: {},
 };
 
 // Create action for initialization
 export const initializeUI = createAction("ui/initialize", () => {
   // Get theme and language from localStorage or use defaults
-  const savedTheme =
-    typeof window !== "undefined"
-      ? (localStorage.getItem("theme") as "light" | "dark" | null)
-      : null;
+  // Validated: only "light"/"dark" are used (#297)
+  const savedTheme = typeof window !== "undefined" ? readSavedTheme() : null;
 
+  // Validated per-user / device language preference (#291)
   const savedLanguage =
-    typeof window !== "undefined"
-      ? (localStorage.getItem("language") as "en" | "ar" | "es" | "fr" | null)
-      : null;
+    typeof window !== "undefined" ? readLanguagePreference(readActiveUserId()) : null;
 
   return {
     payload: {
@@ -41,24 +59,31 @@ export const uiSlice = createSlice({
   reducers: {
     toggleTheme: (state) => {
       state.mode = state.mode === "light" ? "dark" : "light";
-      // Save to localStorage
-      if (typeof window !== "undefined") {
-        localStorage.setItem("theme", state.mode);
-      }
+      // An explicit user choice is persisted (#296)
+      if (typeof window !== "undefined") saveTheme(state.mode);
     },
     setTheme: (state, action: PayloadAction<"light" | "dark">) => {
       state.mode = action.payload;
-      // Save to localStorage
-      if (typeof window !== "undefined") {
-        localStorage.setItem("theme", state.mode);
-      }
+      // An explicit user choice is persisted (#296)
+      if (typeof window !== "undefined") saveTheme(state.mode);
+    },
+    /** Apply a theme derived from the system preference without persisting it (#296). */
+    applyTheme: (state, action: PayloadAction<"light" | "dark">) => {
+      state.mode = action.payload;
+    },
+    /** Set the "translate messages into" preference; null follows the app language (#83). */
+    setTranslationLanguage: (state, action: PayloadAction<TranslationLanguage | null>) => {
+      state.translationLanguage = action.payload;
+      if (typeof window !== "undefined") saveTranslationLanguage(action.payload);
     },
     setLanguage: (state, action: PayloadAction<"en" | "ar" | "es" | "fr">) => {
       state.language = action.payload;
-      // Save to localStorage
-      if (typeof window !== "undefined") {
-        localStorage.setItem("language", state.language);
-      }
+      // Saved for the signed-in user, or as the device preference when signed out (#291)
+      if (typeof window !== "undefined") saveLanguagePreference(action.payload, readActiveUserId());
+    },
+    /** Switch language without saving it (e.g. restoring a user's choice at sign-in) (#291). */
+    applyLanguage: (state, action: PayloadAction<"en" | "ar" | "es" | "fr">) => {
+      state.language = action.payload;
     },
     /**
      * Called by the retry interceptor before each retry attempt.
@@ -83,5 +108,15 @@ export const uiSlice = createSlice({
   },
 });
 
-export const { toggleTheme, setTheme, setRetryStatus, clearRetryStatus } = uiSlice.actions;
+export const {
+  toggleTheme,
+  setTheme,
+  applyTheme,
+  setLanguage,
+  applyLanguage,
+  setTranslationLanguage,
+  setRetryStatus,
+  clearRetryStatus,
+} =
+  uiSlice.actions;
 export default uiSlice.reducer;
